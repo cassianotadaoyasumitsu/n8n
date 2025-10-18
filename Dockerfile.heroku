@@ -27,11 +27,9 @@ COPY scripts ./scripts
 COPY packages ./packages
 
 # Install dependencies
-# Ignore prepare and preinstall scripts (lefthook, etc.) that fail in Docker
+# Skip all lifecycle scripts (prepare, preinstall, etc.) that fail in Docker
+# Native modules like sqlite3 are included as prebuilt binaries
 RUN pnpm install --frozen-lockfile --prod=false --ignore-scripts
-
-# Run only the necessary postinstall scripts
-RUN pnpm rebuild
 
 # Copy source code
 COPY . .
