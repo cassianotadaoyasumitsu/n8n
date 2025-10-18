@@ -40,7 +40,8 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the application
-RUN pnpm build
+# Skip @n8n/codemirror-lang-sql que tem dependências faltando
+RUN pnpm build --filter=!@n8n/codemirror-lang-sql
 
 # ==============================================================================
 # Production stage - smaller image
