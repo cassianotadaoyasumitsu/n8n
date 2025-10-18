@@ -2,7 +2,10 @@
 # but not other .md files
 **/*.md
 !**/THIRD_PARTY_LICENSES.md
+!HEROKU_DEPLOYMENT.md
 **/.env
+**/.env.*
+!**/.env.heroku.example
 .cache
 assets
 node_modules
@@ -20,3 +23,20 @@ docker/**/Dockerfile
 .vscode
 packages/testing
 cypress
+.turbo
+build.log
+*.log
+
+# Heroku specific
+.heroku
+Procfile.local
+docker-compose*.yml
+heroku-deployment-setup.plan.md
+
+# Development files
+.editorconfig
+.prettierrc
+.prettierignore
+lefthook.yml
+renovate.json
+codecov.yml

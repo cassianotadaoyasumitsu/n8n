@@ -6,6 +6,12 @@ if [ -d /opt/custom-certificates ]; then
   c_rehash /opt/custom-certificates
 fi
 
+# Heroku compatibility: Use $PORT if set, otherwise default to 5678
+if [ -n "$PORT" ]; then
+  export N8N_PORT=$PORT
+  echo "Using Heroku PORT: $PORT"
+fi
+
 if [ "$#" -gt 0 ]; then
   # Got started with arguments
   exec n8n "$@"
