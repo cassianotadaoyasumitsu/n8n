@@ -40,8 +40,9 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the application
-# Skip @n8n/codemirror-lang-sql que tem dependências faltando
-RUN pnpm build --filter=!@n8n/codemirror-lang-sql
+# Temporarily disable the broken package build script
+RUN sed -i 's/"build": "tsc -p tsconfig.build.json"/"build": "echo Skipping broken codemirror-lang-sql build"/g' /app/packages/@n8n/codemirror-lang-sql/package.json && \
+    pnpm build
 
 # ==============================================================================
 # Production stage - smaller image
