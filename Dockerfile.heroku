@@ -1,113 +1,56 @@
-FROM node:22.18.0-alpine AS builder
-
-# Install build dependencies
-RUN apk add --update --no-cache \
-    python3 \
-    py3-pip \
-    build-base \
-    ca-certificates \
-    git \
-    bash \
-    openssh \
-    curl
-
-# Install pnpm
-ENV PNPM_HOME="/pnpm"
-ENV PATH="$PNPM_HOME:$PATH"
-RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
-
-WORKDIR /app
-
-# Copy only package files first for better layer caching
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY patches ./patches
-COPY scripts ./scripts
-
-# Copy all packages for workspace resolution
-COPY packages ./packages
-COPY turbo.json ./
-COPY tsconfig.json ./
-
-# Install dependencies
-# Set environment to skip git hooks (lefthook) but allow other scripts
-ENV LEFTHOOK=0
-ENV HUSKY=0
-ENV CI=true
-
-RUN pnpm install --frozen-lockfile
-
-# Now copy the rest of the source code
-COPY . .
-
-# Build the application
-# Temporarily disable broken package build scripts (missing dependencies)
-RUN sed -i 's/"build": "tsc -p tsconfig.build.json"/"build": "echo Skipping codemirror-lang-sql"/g' /app/packages/@n8n/codemirror-lang-sql/package.json && \
-    sed -i 's/"build": "tsc --project tsconfig.build.json"/"build": "echo Skipping eslint-plugin-community-nodes"/g' /app/packages/@n8n/eslint-plugin-community-nodes/package.json && \
-    pnpm build
-
 # ==============================================================================
-# Production stage - smaller image
+# Simplified Heroku Deployment using Official n8n Docker Image
 # ==============================================================================
-FROM node:22.18.0-alpine AS production
+# Instead of building the complex monorepo, we use the official pre-built image
+# and just configure it for Heroku's requirements (dynamic PORT)
+# ==============================================================================
 
-# Install runtime dependencies only
-RUN apk add --update --no-cache \
-    ca-certificates \
-    bash \
-    tzdata \
-    tini \
-    ffmpeg
+FROM n8nio/n8n:latest
 
-# Set timezone
-ENV TZ=America/Sao_Paulo
+# Switch to root to make modifications
+USER root
+
+# Install bash for our startup script
+RUN apk add --no-cache bash
+
+# Create Heroku-compatible startup script
+RUN echo '#!/bin/bash' > /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'set -e' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "========================================"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "Starting n8n on Heroku..."' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "========================================"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '# Heroku compatibility: Use $PORT if set' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'if [ -n "$PORT" ]; then' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '  export N8N_PORT=$PORT' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '  echo "✓ Using Heroku PORT: $PORT"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'else' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '  export N8N_PORT=${N8N_PORT:-5678}' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '  echo "✓ Using default PORT: $N8N_PORT"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'fi' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "Configuration:"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "  N8N_HOST: $N8N_HOST"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "  N8N_PROTOCOL: $N8N_PROTOCOL"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "  N8N_PORT: $N8N_PORT"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "  DB_TYPE: $DB_TYPE"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "  WEBHOOK_URL: $WEBHOOK_URL"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "========================================"' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo '' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'echo "Starting n8n application..."' >> /usr/local/bin/heroku-entrypoint.sh && \
+    echo 'exec n8n start' >> /usr/local/bin/heroku-entrypoint.sh && \
+    chmod +x /usr/local/bin/heroku-entrypoint.sh
+
+# Set environment
 ENV NODE_ENV=production
 
-WORKDIR /home/node
-
-# Create node user if it doesn't exist
-RUN addgroup -g 1000 node || true && \
-    adduser -u 1000 -G node -s /bin/sh -D node || true
-
-# Copy built application from builder
-# Copy the entire packages directory to preserve workspace structure
-COPY --from=builder --chown=node:node /app/packages /home/node/packages
-COPY --from=builder --chown=node:node /app/node_modules /home/node/node_modules
-COPY --from=builder --chown=node:node /app/package.json /home/node/
-COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml /home/node/
-COPY --from=builder --chown=node:node /app/pnpm-lock.yaml /home/node/
-
-# Create symlink for n8n binary
-RUN ln -s /home/node/packages/cli/bin/n8n /usr/local/bin/n8n && \
-    mkdir -p /home/node/.n8n && \
-    chown -R node:node /home/node
-
-# Create startup script with Heroku PORT support
-RUN echo '#!/bin/sh' > /usr/local/bin/docker-entrypoint.sh && \
-    echo 'set -e' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'echo "Starting n8n on Heroku..."' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '# Heroku compatibility: Use $PORT if set' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'if [ -n "$PORT" ]; then' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '  export N8N_PORT=$PORT' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '  echo "Using Heroku PORT: $PORT"' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'fi' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'echo "N8N_HOST: $N8N_HOST"' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'echo "N8N_PROTOCOL: $N8N_PROTOCOL"' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'echo "DB_TYPE: $DB_TYPE"' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'echo "Starting n8n application..."' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'if [ "$#" -gt 0 ]; then' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '  exec n8n "$@"' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'else' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo '  exec n8n' >> /usr/local/bin/docker-entrypoint.sh && \
-    echo 'fi' >> /usr/local/bin/docker-entrypoint.sh && \
-    chmod +x /usr/local/bin/docker-entrypoint.sh
-
+# Expose port (Heroku will override with $PORT)
 EXPOSE 5678
 
+# Switch back to node user
 USER node
 
-ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
+# Use our custom entrypoint
+ENTRYPOINT ["tini", "--", "/usr/local/bin/heroku-entrypoint.sh"]
 CMD []
