@@ -1,8 +1,4 @@
 build:
   docker:
-    web: docker/images/n8n/Dockerfile
-  config:
-    NODE_ENV: production
-run:
-  web: n8n start
+    web: Dockerfile.heroku
 

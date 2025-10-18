@@ -39,15 +39,13 @@ O repositório já contém os arquivos necessários:
 ```
 n8n/
 ├── heroku.yml                    # Configuração de build Docker para Heroku
+├── Dockerfile.heroku            # Dockerfile específico para Heroku (compila tudo)
 ├── docker-compose.heroku.yml     # Para testes locais (simula ambiente Heroku)
 ├── env.heroku.example           # Template de variáveis de ambiente
-├── docker/
-│   └── images/
-│       └── n8n/
-│           ├── Dockerfile        # Build da imagem Docker
-│           └── docker-entrypoint.sh  # Script de inicialização (com suporte a PORT)
 └── .dockerignore                # Otimização do build
 ```
+
+> **Nota**: Usamos `Dockerfile.heroku` ao invés do Dockerfile original porque o n8n usa um build system complexo com monorepo pnpm. O Dockerfile.heroku faz todo o build dentro do container.
 
 ## 🚀 Passo a Passo - Deploy Inicial
 
@@ -60,24 +58,26 @@ heroku login
 ### 2. Criar Aplicação no Heroku
 
 ```bash
-# Substitua 'my-n8n-app' pelo nome desejado (deve ser único)
-heroku create my-n8n-app
+# Criar aplicação (escolha um nome único)
+heroku create u-innova-n8n --region us
+
+# O Heroku irá mostrar a URL: https://u-innova-n8n.herokuapp.com
 ```
 
 ### 3. Adicionar PostgreSQL
 
 ```bash
 # Adiciona PostgreSQL Mini ($5/mês)
-heroku addons:create heroku-postgresql:mini -a my-n8n-app
+heroku addons:create heroku-postgresql:mini -a u-innova-n8n
 
 # Aguarde alguns segundos e verifique
-heroku addons:info postgresql -a my-n8n-app
+heroku addons:info postgresql -a u-innova-n8n
 ```
 
 ### 4. Configurar Stack para Container
 
 ```bash
-heroku stack:set container -a my-n8n-app
+heroku stack:set container -a u-innova-n8n
 ```
 
 ### 5. Configurar Variáveis de Ambiente Obrigatórias
@@ -89,16 +89,16 @@ ENCRYPTION_KEY=$(openssl rand -hex 32)
 # Configurar variáveis essenciais
 heroku config:set \
   N8N_ENCRYPTION_KEY="$ENCRYPTION_KEY" \
-  N8N_HOST="my-n8n-app.herokuapp.com" \
+  N8N_HOST="u-innova-n8n.herokuapp.com" \
   N8N_PROTOCOL="https" \
-  WEBHOOK_URL="https://my-n8n-app.herokuapp.com/" \
+  WEBHOOK_URL="https://u-innova-n8n.herokuapp.com/" \
   DB_TYPE="postgresdb" \
   NODE_ENV="production" \
   N8N_LISTEN_ADDRESS="0.0.0.0" \
-  -a my-n8n-app
+  -a u-innova-n8n
 ```
 
-> ⚠️ **IMPORTANTE**: Substitua `my-n8n-app` pelo nome real da sua aplicação Heroku!
+> 💾 **IMPORTANTE**: Salve o `$ENCRYPTION_KEY` em um local seguro! Você precisará dele se recriar a aplicação.
 
 ### 6. Configurar Variáveis Opcionais (Recomendadas)
 
@@ -107,52 +107,47 @@ heroku config:set \
   N8N_DIAGNOSTICS_ENABLED="false" \
   N8N_VERSION_NOTIFICATIONS_ENABLED="false" \
   GENERIC_TIMEZONE="America/Sao_Paulo" \
-  -a my-n8n-app
+  -a u-innova-n8n
 ```
 
-### 7. Build e Deploy
+### 7. Deploy
 
-Antes de fazer o deploy, é necessário compilar o projeto:
-
-```bash
-# No diretório raiz do n8n
-pnpm build:deploy
-
-# Fazer commit dos arquivos compilados (se necessário)
-git add .
-git commit -m "feat: prepare for Heroku deployment"
-```
-
-Agora faça o deploy:
+**Não é necessário compilar localmente!** O `Dockerfile.heroku` faz todo o build dentro do container.
 
 ```bash
-# Adicionar remote do Heroku (se ainda não foi adicionado)
-heroku git:remote -a my-n8n-app
+# Adicionar remote do Heroku (se ainda não foi adicionado automaticamente)
+heroku git:remote -a u-innova-n8n
+
+# Fazer commit das mudanças (se houver)
+git add heroku.yml Dockerfile.heroku
+git commit -m "feat: add Heroku deployment configuration"
 
 # Push para Heroku (trigger do build Docker)
 git push heroku master
 ```
 
-> **Nota**: O build pode levar de 10-20 minutos na primeira vez.
+> **Nota**: O primeiro build pode levar de **15-25 minutos** pois compila todo o monorepo pnpm dentro do container.
 
-### 8. Verificar Status
+### 8. Verificar Status e Logs
 
 ```bash
-# Ver logs em tempo real
-heroku logs --tail -a my-n8n-app
+# Ver logs em tempo real (acompanhe o build)
+heroku logs --tail -a u-innova-n8n
 
 # Verificar status do dyno
-heroku ps -a my-n8n-app
+heroku ps -a u-innova-n8n
 
 # Abrir aplicação no navegador
-heroku open -a my-n8n-app
+heroku open -a u-innova-n8n
 ```
 
 ### 9. Configurar Primeiro Usuário
 
-1. Acesse: `https://my-n8n-app.herokuapp.com`
+1. Acesse: `https://u-innova-n8n.herokuapp.com`
 2. Crie sua conta de administrador
 3. Configure seus workflows
+
+🎉 **Pronto! Seu n8n está rodando no Heroku!**
 
 ## 🔧 Configurações Avançadas
 
@@ -288,6 +283,18 @@ heroku dyno:type web=standard-1x -a my-n8n-app
 ```
 
 ## 🐛 Troubleshooting
+
+### Erro: "COPY failed: file not found... stat compiled"
+
+**Causa**: O Dockerfile original do n8n (`docker/images/n8n/Dockerfile`) espera arquivos já compilados na pasta `./compiled`
+
+**Solução**: ✅ **Já resolvido!** Use o `Dockerfile.heroku` que compila tudo internamente. Certifique-se de que o `heroku.yml` está apontando para `Dockerfile.heroku`:
+
+```yaml
+build:
+  docker:
+    web: Dockerfile.heroku
+```
 
 ### Erro: "Application Error" ou "H10"
 
