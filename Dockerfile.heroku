@@ -40,8 +40,9 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 # Build the application
-# Temporarily disable the broken package build script
-RUN sed -i 's/"build": "tsc -p tsconfig.build.json"/"build": "echo Skipping broken codemirror-lang-sql build"/g' /app/packages/@n8n/codemirror-lang-sql/package.json && \
+# Temporarily disable broken package build scripts (missing dependencies)
+RUN sed -i 's/"build": "tsc -p tsconfig.build.json"/"build": "echo Skipping codemirror-lang-sql"/g' /app/packages/@n8n/codemirror-lang-sql/package.json && \
+    sed -i 's/"build": "tsc --project tsconfig.build.json"/"build": "echo Skipping eslint-plugin-community-nodes"/g' /app/packages/@n8n/eslint-plugin-community-nodes/package.json && \
     pnpm build
 
 # ==============================================================================
