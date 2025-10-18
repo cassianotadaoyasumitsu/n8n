@@ -1,6 +1,6 @@
 FROM node:22.18.0-alpine AS builder
 
-# Install dependencies
+# Install build dependencies
 RUN apk add --update --no-cache \
     python3 \
     py3-pip \
@@ -18,70 +18,69 @@ RUN corepack enable && corepack prepare pnpm@10.18.3 --activate
 
 WORKDIR /app
 
-# Copy package files
+# Copy only package files first for better layer caching
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 COPY scripts ./scripts
 
-# Copy all package.json files to install dependencies
+# Copy all packages for workspace resolution
 COPY packages ./packages
+COPY turbo.json ./
+COPY tsconfig.json ./
 
-# Install dependencies
-# Skip all lifecycle scripts (prepare, preinstall, etc.) that fail in Docker
-# Native modules like sqlite3 are included as prebuilt binaries
-RUN pnpm install --frozen-lockfile --prod=false --ignore-scripts
+# Install dependencies WITHOUT lifecycle scripts to avoid lefthook errors
+# This is similar to npm ci but for pnpm
+RUN pnpm install --frozen-lockfile --ignore-scripts
 
-# Copy source code
+# Now copy the rest of the source code
 COPY . .
 
-# Build the application
+# Build the application (this will run without prepare/preinstall hooks)
+# Set CI environment to skip interactive prompts
+ENV CI=true
 RUN pnpm build
 
-# Production stage
+# ==============================================================================
+# Production stage - smaller image
+# ==============================================================================
 FROM node:22.18.0-alpine AS production
 
-# Install runtime dependencies
+# Install runtime dependencies only
 RUN apk add --update --no-cache \
     ca-certificates \
     bash \
     tzdata \
     tini \
-    su-exec \
-    ffmpeg \
-    && rm -rf /var/cache/apk/*
+    ffmpeg
 
 # Set timezone
 ENV TZ=America/Sao_Paulo
 ENV NODE_ENV=production
-ENV NODE_ICU_DATA=/usr/local/lib/node_modules/full-icu
-
-# Create n8n user
-RUN addgroup -g 1000 node && \
-    adduser -u 1000 -G node -s /bin/sh -D node
 
 WORKDIR /home/node
 
+# Create node user if it doesn't exist
+RUN addgroup -g 1000 node || true && \
+    adduser -u 1000 -G node -s /bin/sh -D node || true
+
 # Copy built application from builder
-COPY --from=builder --chown=node:node /app/packages/cli/dist /usr/local/lib/node_modules/n8n/dist
-COPY --from=builder --chown=node:node /app/packages/cli/bin /usr/local/lib/node_modules/n8n/bin
-COPY --from=builder --chown=node:node /app/packages/cli/package.json /usr/local/lib/node_modules/n8n/
-COPY --from=builder --chown=node:node /app/packages/cli/templates /usr/local/lib/node_modules/n8n/templates
-COPY --from=builder --chown=node:node /app/packages/cli/node_modules /usr/local/lib/node_modules/n8n/node_modules
+# Copy the entire packages directory to preserve workspace structure
+COPY --from=builder --chown=node:node /app/packages /home/node/packages
+COPY --from=builder --chown=node:node /app/node_modules /home/node/node_modules
+COPY --from=builder --chown=node:node /app/package.json /home/node/
+COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml /home/node/
+COPY --from=builder --chown=node:node /app/pnpm-lock.yaml /home/node/
 
-# Copy other necessary packages
-COPY --from=builder --chown=node:node /app/packages/core /usr/local/lib/node_modules/n8n/node_modules/n8n-core
-COPY --from=builder --chown=node:node /app/packages/workflow /usr/local/lib/node_modules/n8n/node_modules/n8n-workflow
-COPY --from=builder --chown=node:node /app/packages/nodes-base /usr/local/lib/node_modules/n8n/node_modules/n8n-nodes-base
-COPY --from=builder --chown=node:node /app/packages/frontend/editor-ui/dist /usr/local/lib/node_modules/n8n/node_modules/n8n-editor-ui/dist
-
-# Create symlink
-RUN ln -s /usr/local/lib/node_modules/n8n/bin/n8n /usr/local/bin/n8n && \
+# Create symlink for n8n binary
+RUN ln -s /home/node/packages/cli/bin/n8n /usr/local/bin/n8n && \
     mkdir -p /home/node/.n8n && \
     chown -R node:node /home/node
 
-# Heroku compatibility: Handle dynamic PORT
+# Create startup script with Heroku PORT support
 RUN echo '#!/bin/sh' > /usr/local/bin/docker-entrypoint.sh && \
     echo 'set -e' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo 'echo "Starting n8n on Heroku..."' >> /usr/local/bin/docker-entrypoint.sh && \
     echo '' >> /usr/local/bin/docker-entrypoint.sh && \
     echo '# Heroku compatibility: Use $PORT if set' >> /usr/local/bin/docker-entrypoint.sh && \
     echo 'if [ -n "$PORT" ]; then' >> /usr/local/bin/docker-entrypoint.sh && \
@@ -89,6 +88,11 @@ RUN echo '#!/bin/sh' > /usr/local/bin/docker-entrypoint.sh && \
     echo '  echo "Using Heroku PORT: $PORT"' >> /usr/local/bin/docker-entrypoint.sh && \
     echo 'fi' >> /usr/local/bin/docker-entrypoint.sh && \
     echo '' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo 'echo "N8N_HOST: $N8N_HOST"' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo 'echo "N8N_PROTOCOL: $N8N_PROTOCOL"' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo 'echo "DB_TYPE: $DB_TYPE"' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo '' >> /usr/local/bin/docker-entrypoint.sh && \
+    echo 'echo "Starting n8n application..."' >> /usr/local/bin/docker-entrypoint.sh && \
     echo 'if [ "$#" -gt 0 ]; then' >> /usr/local/bin/docker-entrypoint.sh && \
     echo '  exec n8n "$@"' >> /usr/local/bin/docker-entrypoint.sh && \
     echo 'else' >> /usr/local/bin/docker-entrypoint.sh && \
@@ -102,4 +106,3 @@ USER node
 
 ENTRYPOINT ["tini", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD []
-
